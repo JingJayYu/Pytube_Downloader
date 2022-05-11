@@ -1,0 +1,193 @@
+#!/usr/bin/env python
+
+from pytube import YouTube
+import os
+import platform
+import subprocess
+from tqdm import tqdm
+
+# 建立一集合
+fileobj = {}
+
+# 下載次數預設為 1
+download_count = 1
+
+# 識別作業系統建立預設儲存影片位置
+def pytube_folder():
+    # 平台系統
+    sys = platform.system()
+    # 使用者家目錄
+    home = os.path.expanduser("~")
+
+    if sys == "Windows":
+        folder = os.path.join(home, "Videos", "Pytube")
+    
+    #Mac系統
+    elif sys == "Darwin":
+        folder = os.path.join(home, "Movies", "Pytube")
+    
+    # 若PYTUBE資料夾不存在
+    if not os.path.isdir(folder):
+        # 建立PYTUBE資料夾
+        os.mkdir(folder)
+
+    # 傳回資料夾路徑
+    return folder
+
+# 下載進度條
+def progressbar(self, chunk, bytes_remaining):
+    # 剩餘數量
+    remaining = bytes_remaining
+    # 總大小量
+    total_size = self.filesize
+    # percent = (total_size - remaining)/total_size*100
+    pbr = tqdm(total=total_size,desc="Downloading...", ncols=100,colour="blue", unit_scale=True)
+    pbr.update(round((total_size - remaining),2))
+        
+
+# 影片所有可用的解析度
+def video_res(yt):
+    # 建立集合
+    res_set = set()
+    # 讀取影片所有串流
+    video_list = yt.streams.filter(type="video")
+    
+    for v in video_list:
+        # 將串流中的解析度加入集合
+        res_set.add(v.resolution)
+
+    # 回傳排序後的集合列表
+    return sorted(res_set, reverse=True, key=lambda s:int(s[:-1]))
+
+# 下載影片
+def download_video(yt,media_type):
+    filter = yt.streams.filter
+
+    # 指定影片格式
+    if media_type == "uuhd":
+        target = filter(type="video", resolution="4320p").first()  
+    elif media_type == "a":
+        target = filter(type="audio", mime_type="audio/mp4").first()
+    elif media_type == "uhd":
+        target = filter(type="video", resolution="2160p").first()
+    elif media_type == "qhd":
+        target = filter(type="video", resolution="1440p").first()
+    elif media_type == "fhd":
+        target = filter(type="video", resolution="1080p").first()
+    elif media_type == "hd":
+        target = filter(type="video", resolution="720p").first()
+    else:
+        target = None
+
+    # 若無指定的格式
+    if target is None:
+        print('沒有您指定的解析度，可用的解析度如下：')
+        res_list = video_res(yt)
+
+        # 列出可用的解析度格式
+        for i, res in enumerate(res_list):
+            print('%d) %s'%(i+1, res))
+
+        val = input('請選擇（預設%s）：'%(res_list[0]))
+
+        # 將選擇的數字-1轉變為正確的順序
+        try:
+            res = res_list[int(val)-1]
+        except:
+            res = res_list[0]
+
+        print('您選擇的是 %s 。'%(res))
+        # 指定新的格式
+        target = filter(type="video", resolution=res).first()
+
+    target.download(output_path=pytube_folder())
+
+# 判別影片是否有音檔
+def check_media(filename):
+    # 利用ffmpeg判別是否有音訊
+    out = subprocess.run(["C:\\ffmpeg\\bin\\ffprobe", filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if (out.stdout.decode('utf-8').rfind('Audio') == -1):
+        return -1
+    else:
+        return 1
+
+# 合併音檔
+def merge_media():
+    temp_video = os.path.join(fileobj['dir'], 'temp_video.mp4')
+    temp_audio = os.path.join(fileobj['dir'], 'temp_audio.mp4')
+    temp_output = os.path.join(fileobj['dir'], 'output.mp4')
+    # 命令提示字元的指令存進變數
+    cmd = f'C:\\ffmpeg\\bin\\ffmpeg -i {temp_video} -i {temp_audio} \
+        -map 0:v -map 1:a -c copy -y {temp_output}'
+    try:
+        # 執行cmd命令合併視訊和聲音
+        subprocess.run(cmd, shell=True)
+        os.rename(temp_output, os.path.join(fileobj['dir'], fileobj['name']))
+        os.remove(temp_audio)
+        os.remove(temp_video)
+        print('視訊和聲音合併完成')
+    except:
+        print('視訊和聲音合併失敗')
+
+def onComplete(stream, file_path):
+    global download_count, fileobj
+    # 將檔案路徑存入集合
+    fileobj['name'] = os.path.basename(file_path)
+    fileobj['dir'] = os.path.dirname(file_path)
+    print('\r')
+    
+    #第一次下載
+    if download_count == 1:
+        # 檢查影片是否有音訊
+        if check_media(file_path) == -1:
+            print('此影片沒有聲音')
+            # 下載次數+1
+            download_count += 1
+            try:
+                # 將下載的影片 重新命名為暫存檔
+                os.rename(file_path, os.path.join(
+                    fileobj['dir'], 'temp_video.mp4'))
+            except:
+                print('視訊檔重新命名失敗，請將先前的影像暫存檔刪除')
+                return
+ 
+            print('準備下載聲音檔')
+            media_type = "a"
+            download_video(yt,media_type)
+            
+        else:
+            print('下載成功！')
+    # 第二次下載
+    else:
+        try:
+            # 將下載的音訊重新命名為暫存檔
+            os.rename(file_path, os.path.join(
+                fileobj['dir'], 'temp_audio.mp4'))
+        except:
+            print("聲音檔重新命名失敗")
+        #合併影片與音訊
+        merge_media()
+
+
+def main():
+    global yt
+    global media_type
+    yt_url = input("輸入Youtube影片網址...\n你的網址: ").strip()
+    try:
+        yt = YouTube(yt_url, on_progress_callback = progressbar,on_complete_callback=onComplete)
+    except:
+        print("\n下載時發生錯誤，請確認網路連線和Youtube網址")
+
+    print()
+    print(yt.title)
+    print()
+    # 選擇影片格式
+    media_type = input("----------輸入格式----------\nuuhd = 8k(4320p)\nuhd = 4k(2160p)\nqhd = 2k(1440p)\nfhd = 1080p\nhd = 720p\na = 只有音樂\n你選擇的格式: ").lower().strip()
+    download_video(yt,media_type)
+
+        
+# 執行
+if __name__ == '__main__':
+    while True:
+        main()
+        print()
